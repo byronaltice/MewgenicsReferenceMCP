@@ -6,3 +6,4 @@ __pycache__/
 dist/
 .uv/
 data/mewgenics.db
+data/chroma/

@@ -8,4 +8,6 @@ dependencies = [
     "aiohttp>=3.9",
     "markdownify>=0.13",
     "lxml>=5.0",
+    "sentence-transformers>=5.5.1",
+    "chromadb>=1.5.9",
 ]
