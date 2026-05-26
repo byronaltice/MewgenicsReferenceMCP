@@ -1,0 +1,7 @@
+_samples/
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+dist/
+.uv/
