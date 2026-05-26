@@ -4,6 +4,12 @@
 
 A game reference knowledge base for Mewgenics. Agents use it to look up mechanics, abilities, UI elements, assets, and structured game data. The primary interface is an MCP server. Do not treat this as a general codebase — the "product" is the data and the retrieval pipeline.
 
+## Agent Orchestration
+
+When working on this repo, the orchestrating agent should keep its context small. Tasks that require significant context — writing and running scripts, ingestion runs, scraping, parsing HTML — should be spawned as subagents. The orchestrator handles decisions, review, and coordination only.
+
+Simple well-scoped tasks (formatting, file moves, small edits) can be handed to a smaller/faster model (Haiku).
+
 ## Scripting-First Rule
 
 Do not read wiki pages or large files into context to copy them to disk. Use scripts.
@@ -42,6 +48,16 @@ Large lists are never returned whole. Agents query SQLite with filters. Short ta
 - `read_file(path)` — read a specific file into context
 - `query_db(table, filters={}, limit=20)` — query structured data
 - `list_db_tables()` — discover available tables and their schemas
+
+## Parallel Downloads
+
+Never download images or other assets one-at-a-time. Pages can have hundreds or thousands of images. Always use concurrent downloads:
+
+- Use `asyncio` + `aiohttp` for async HTTP, or `concurrent.futures.ThreadPoolExecutor` for thread-based concurrency
+- Use a semaphore to cap concurrent connections (default: 20) to avoid hammering the server
+- Log progress in batches, not per-file
+
+One-at-a-time downloads are a hard failure — if you see sequential image fetching in any script, fix it before merging.
 
 ## Path Handling
 
