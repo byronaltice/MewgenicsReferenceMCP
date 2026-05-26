@@ -7,7 +7,9 @@ generates embeddings using sentence-transformers, and stores in ChromaDB.
 Embedding model: jinaai/jina-embeddings-v3 (interim — doctrine specifies
 "Jina v5-text-small" but v3 is the stable release available as of 2026-05;
 update model ID when v5-text-small is released on HuggingFace).
-Fallback: BAAI/bge-m3 if jina-embeddings-v3 fails to load.
+Fallback: all-MiniLM-L6-v2 if jina-embeddings-v3 fails to load.
+
+Requires HF_TOKEN environment variable for HuggingFace authentication.
 
 Usage:
     uv run scripts/embed.py           # embed all content
@@ -17,9 +19,33 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# HuggingFace authentication — must happen before any model loading
+# ---------------------------------------------------------------------------
+
+def _require_hf_token() -> str:
+    """Return HF_TOKEN from environment, or exit with a clear error message."""
+    token = os.environ.get("HF_TOKEN")
+    if not token:
+        print("ERROR: HF_TOKEN environment variable is not set. Cannot authenticate with HuggingFace. Exiting.")
+        sys.exit(1)
+    return token
+
+
+def _hf_login(token: str) -> None:
+    """Log in to HuggingFace Hub with the provided token."""
+    try:
+        import huggingface_hub
+        huggingface_hub.login(token=token)
+        print("HuggingFace login succeeded.")
+    except Exception as exc:
+        print(f"WARNING: HuggingFace login failed: {exc}")
+        print("  Proceeding — public models may still load without login.")
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -147,21 +173,25 @@ def chunk_file(path: Path) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def load_model():
-    """Load the embedding model, falling back to BAAI/bge-m3 if needed."""
+    """Load the embedding model, falling back to all-MiniLM-L6-v2 if primary fails."""
     from sentence_transformers import SentenceTransformer
 
     for model_id in (PRIMARY_MODEL, FALLBACK_MODEL):
         try:
-            print(f"Loading model: {model_id}  (first run downloads ~600 MB — please wait)")
+            if model_id == PRIMARY_MODEL:
+                print(f"Loading model: {model_id}  (first run downloads ~600 MB — please wait)")
+            else:
+                print(f"  WARNING: Primary model ({PRIMARY_MODEL}) failed to load. Falling back to {FALLBACK_MODEL}.")
+                print(f"Loading fallback model: {model_id}")
             # trust_remote_code required for jina-embeddings-v3
-            model = SentenceTransformer(model_id, trust_remote_code=True)
+            # Force CPU device — jina-v3 OOMs on Apple Silicon MPS with large batches
+            model = SentenceTransformer(model_id, trust_remote_code=True, device="cpu")
             print(f"  Model loaded: {model_id}")
-            return model
+            return model, model_id
         except Exception as exc:
             print(f"  Failed to load {model_id}: {exc}")
             if model_id == FALLBACK_MODEL:
                 raise RuntimeError("Both primary and fallback models failed to load.") from exc
-            print(f"  Falling back to {FALLBACK_MODEL}")
 
     raise RuntimeError("Unreachable")
 
@@ -186,17 +216,17 @@ def get_collection(chroma_dir: Path = CHROMA_DIR):
 # Main pipeline
 # ---------------------------------------------------------------------------
 
-def run_embed() -> tuple[int, int, int]:
-    """Embed all content files. Returns (file_count, chunk_count, new_embeddings)."""
+def run_embed() -> tuple[int, int, int, str]:
+    """Embed all content files. Returns (file_count, chunk_count, new_embeddings, model_id)."""
     md_files = sorted(CONTENT_DIR.rglob("*.md"))
     if not md_files:
         print("No markdown files found in content/")
-        return 0, 0, 0
+        return 0, 0, 0, PRIMARY_MODEL
 
     print(f"Found {len(md_files)} markdown files")
 
     collection = get_collection()
-    model = load_model()
+    model, model_id = load_model()
 
     # Gather existing doc IDs to skip already-embedded chunks
     existing_ids: set[str] = set()
@@ -216,10 +246,14 @@ def run_embed() -> tuple[int, int, int]:
 
     if not new_chunks:
         print("Nothing new to embed.")
-        return len(md_files), len(all_chunks), 0
+        return len(md_files), len(all_chunks), 0, model_id
 
-    # Embed in batches, printing progress every 10 files worth
-    batch_size = 64
+    import gc
+    import torch
+
+    # Embed one chunk at a time — jina-v3 is memory-hungry on Apple Silicon CPU;
+    # single-item batches prevent OOM and the outer loop allows aggressive GC.
+    batch_size = 1
     stored = 0
     texts = [c["text"] for c in new_chunks]
     ids = [c["doc_id"] for c in new_chunks]
@@ -231,7 +265,8 @@ def run_embed() -> tuple[int, int, int]:
         batch_ids = ids[batch_start:batch_end]
         batch_meta = metadatas[batch_start:batch_end]
 
-        embeddings = model.encode(batch_texts, show_progress_bar=False).tolist()
+        with torch.no_grad():
+            embeddings = model.encode(batch_texts, show_progress_bar=False).tolist()
 
         collection.add(
             ids=batch_ids,
@@ -240,11 +275,12 @@ def run_embed() -> tuple[int, int, int]:
             metadatas=batch_meta,
         )
         stored += len(batch_texts)
+        gc.collect()
 
         if stored % 10 == 0 or batch_end == len(new_chunks):
-            print(f"  Embedded {stored}/{len(new_chunks)} chunks...")
+            print(f"  Embedded {stored}/{len(new_chunks)} chunks...", flush=True)
 
-    return len(md_files), len(all_chunks), stored
+    return len(md_files), len(all_chunks), stored, model_id
 
 
 # ---------------------------------------------------------------------------
@@ -253,12 +289,10 @@ def run_embed() -> tuple[int, int, int]:
 
 def run_test():
     """Run sanity queries against the populated collection."""
-    from sentence_transformers import SentenceTransformer
-
     print("\n--- Sanity queries ---")
     collection = get_collection()
 
-    model = load_model()
+    model, model_id = load_model()
 
     queries = [
         "warrior class abilities",
@@ -292,9 +326,14 @@ def main():
     parser.add_argument("--test", action="store_true", help="Run sanity queries after embedding")
     args = parser.parse_args()
 
-    file_count, chunk_count, new_stored = run_embed()
+    # Authenticate with HuggingFace before loading any model
+    token = _require_hf_token()
+    _hf_login(token)
+
+    file_count, chunk_count, new_stored, model_id = run_embed()
 
     print("\n=== Summary ===")
+    print(f"  Model used      : {model_id}")
     print(f"  Files processed : {file_count}")
     print(f"  Total chunks    : {chunk_count}")
     print(f"  New embeddings  : {new_stored}")
