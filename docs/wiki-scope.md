@@ -37,6 +37,8 @@ Additional class pages to be added after verifying the above work correctly.
 
 ## Lower Priority — Documented for Later
 
+Do not import these yet.
+
 | URL | Notes |
 |---|---|
 | https://mewgenics.wiki.gg/wiki/Chapters | |
