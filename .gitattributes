@@ -1,0 +1,16 @@
+# Normalize all text files to LF in the repo and on checkout (Windows and Unix)
+* text=auto eol=lf
+
+# Explicit binary files — never normalize
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.db binary
+*.sqlite binary
+*.swf binary
+*.wav binary
+*.mp3 binary
+*.ogg binary
