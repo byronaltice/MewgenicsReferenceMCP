@@ -27,6 +27,8 @@ CONTENT_DIR = REPO_ROOT / "content"
 CHROMA_DIR = REPO_ROOT / "data" / "chroma"
 DB_PATH = REPO_ROOT / "data" / "mewgenics.db"
 
+IMAGE_EXTENSIONS = {".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp"}
+
 # ---------------------------------------------------------------------------
 # Embedding model config (mirrors scripts/embed.py)
 # ---------------------------------------------------------------------------
@@ -314,6 +316,46 @@ def _list_known_tables(conn: sqlite3.Connection) -> list[dict]:
             }
         )
     return result
+
+
+@mcp.tool()
+def get_image(path: str) -> str:
+    """Return a content image as a base64-encoded string.
+
+    Args:
+        path: Repo-relative path to an image inside content/, e.g.
+              "content/abilities/images/ABILITY_1D_Chess.svg"
+              (this is the value stored in the icon_path column of the DB)
+    Returns:
+        A base64-encoded string prefixed with a data URI header, e.g.
+        "data:image/svg+xml;base64,PHN2Zy..."
+        or an error message string.
+    """
+    import base64
+    import mimetypes
+
+    try:
+        target = (REPO_ROOT / path).resolve()
+    except Exception as exc:
+        return f"ERROR: Invalid path: {exc}"
+
+    content_root = CONTENT_DIR.resolve()
+    if not str(target).startswith(str(content_root)):
+        return f"ERROR: Path must be inside content/ directory. Got: {path!r}"
+
+    if not target.exists():
+        return f"ERROR: File not found: {path!r}"
+
+    if target.suffix.lower() not in IMAGE_EXTENSIONS:
+        return f"ERROR: Not a recognised image type: {target.suffix!r}"
+
+    try:
+        mime, _ = mimetypes.guess_type(str(target))
+        mime = mime or "application/octet-stream"
+        data = base64.b64encode(target.read_bytes()).decode("ascii")
+        return f"data:{mime};base64,{data}"
+    except Exception as exc:
+        return f"ERROR: Could not read image: {exc}"
 
 
 @mcp.tool()
