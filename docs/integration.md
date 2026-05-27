@@ -3,10 +3,25 @@
 ## Setup
 
 ```bash
-git clone <repo-url> MewgenicsReferenceMCP
+git clone https://github.com/byronaltice/MewgenicsReferenceMCP
 cd MewgenicsReferenceMCP
 uv sync
 ```
+
+**What's already in the repo (no pipeline needed):**
+- `content/` — all scraped wiki pages as markdown files
+- `data/mewgenics.db` — SQLite database (abilities, mutations, disorders)
+
+**What's NOT in the repo (generated locally, gitignored):**
+- `data/chroma/` — ChromaDB vector embeddings
+
+On a fresh clone, you must generate the embeddings before `search` will work:
+
+```bash
+uv run scripts/embed.py
+```
+
+This downloads the embedding model (~600 MB on first run) and indexes all content files. `read_file`, `query_db`, and `list_db_tables` work immediately without this step.
 
 ## Environment variables
 
@@ -129,17 +144,19 @@ Call this before `query_db` if you don't know the schema.
 
 ## Re-ingesting content
 
-If the wiki changes, re-run the scraping and embedding pipeline:
+If the wiki changes and you need to update the scraped content:
 
 ```bash
-# Re-scrape wiki pages to content/
+# Re-scrape wiki pages → updates content/ and data/mewgenics.db
 uv run scripts/scrape.py
 
-# Re-embed into ChromaDB (only processes new/changed chunks)
+# Re-embed updated content → updates data/chroma/
 uv run scripts/embed.py
 ```
 
 The embed script is incremental — it skips chunks already in the vector store. If you need a full re-embed, delete `data/chroma/` first.
+
+**Note:** Only run `scrape.py` when wiki content has actually changed. On a fresh clone, the scraped content is already committed — run `embed.py` only.
 
 ## Troubleshooting
 
@@ -147,5 +164,5 @@ The embed script is incremental — it skips chunks already in the vector store.
 |---|---|---|
 | `search` returns `ERROR: HF_TOKEN not set` | Missing env var | Set `HF_TOKEN` and restart server |
 | `search` returns `ERROR: data/chroma/ not found` | Embeddings not generated | Run `uv run scripts/embed.py` |
-| `query_db` returns `ERROR: data/mewgenics.db not found` | DB not generated | Run the ingest/scrape pipeline |
+| `query_db` returns `ERROR: data/mewgenics.db not found` | DB missing (should be in repo) | Run `git pull` — if still missing, run `uv run scripts/scrape.py` |
 | Model download hangs | First run downloads ~600 MB | Wait; check network and HuggingFace token validity |
