@@ -10,7 +10,7 @@ uv sync
 
 **What's already in the repo (no pipeline needed):**
 - `content/` — all scraped wiki pages as markdown files
-- `data/mewgenics.db` — SQLite database (abilities, mutations, disorders)
+- `data/mewgenics.db` — SQLite database (abilities 1160 rows, mutations 760 rows, disorders 126 rows)
 
 **What's NOT in the repo (generated locally, gitignored):**
 - `data/chroma/` — ChromaDB vector embeddings
